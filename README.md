@@ -112,8 +112,12 @@ windowrulev = center, title:^(LifeManager)$
 ## Images
 
 <img width="1083" height="420" alt="image" src="https://github.com/user-attachments/assets/34178744-59e8-46c4-828b-8f48d1f6e5a1" />
+
 <img width="1086" height="421" alt="image" src="https://github.com/user-attachments/assets/937e5cf6-4562-4193-a7b7-5f3bb9092709" />
+
 <img width="1080" height="855" alt="image" src="https://github.com/user-attachments/assets/162559a8-fda7-4f0b-803b-afb3fa401166" />
+
+<img width="1081" height="857" alt="image" src="https://github.com/user-attachments/assets/c21dc935-2798-42e2-904f-16344e537924" />
 
 
 
