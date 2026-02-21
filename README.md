@@ -111,10 +111,30 @@ windowrulev = center, title:^(LifeManager)$
 
 ## Images
 
-<img width="2556" height="1440" alt="image" src="https://github.com/user-attachments/assets/c82d3f67-3fca-43c1-ba87-44e6d052874f" />
-<img width="1266" height="1402" alt="image" src="https://github.com/user-attachments/assets/4af0cb4c-d582-4476-a743-e24a883be86f" />
-<img width="1274" height="1402" alt="image" src="https://github.com/user-attachments/assets/49a6ac24-36e6-420d-a16f-f24082810c44" />
-<img width="1275" height="1403" alt="image" src="https://github.com/user-attachments/assets/d78a4463-a57b-4961-b4fc-c6d27f51e6dd" />
+<img width="1083" height="420" alt="image" src="https://github.com/user-attachments/assets/34178744-59e8-46c4-828b-8f48d1f6e5a1" />
+<img width="1086" height="421" alt="image" src="https://github.com/user-attachments/assets/937e5cf6-4562-4193-a7b7-5f3bb9092709" />
+<img width="1080" height="855" alt="image" src="https://github.com/user-attachments/assets/162559a8-fda7-4f0b-803b-afb3fa401166" />
+
+
+
+## Themes
+- Nord (default)
+<img width="1080" height="855" alt="image" src="https://github.com/user-attachments/assets/3eb82924-bc0a-4e3f-b725-4898c29f289b" />
+- Gruvbox
+<img width="1082" height="857" alt="image" src="https://github.com/user-attachments/assets/483baf86-fc44-4f1f-a131-7b2a2ad4849f" />
+- Tokyo night
+<img width="1081" height="855" alt="image" src="https://github.com/user-attachments/assets/d83642e2-a8a5-4d55-bf33-abdc2ac6e8a8" />
+- Dracula
+<img width="1084" height="858" alt="image" src="https://github.com/user-attachments/assets/b98cbefd-da5c-409a-b554-b4b39623a32a" />
+- Cyberpunk
+<img width="1082" height="851" alt="image" src="https://github.com/user-attachments/assets/8e7952ba-1f7f-4fd0-ba61-068cffc9951e" />
+- hacker
+<img width="1081" height="849" alt="image" src="https://github.com/user-attachments/assets/9a9ed49a-6254-4357-8007-9d920c362250" />
+- vietnam (my favorites)
+<img width="1082" height="850" alt="image" src="https://github.com/user-attachments/assets/c464e87d-b43c-4d54-aa51-2fe76267d527" />
+- catppuccin-mocha
+<img width="1079" height="856" alt="image" src="https://github.com/user-attachments/assets/c228ee69-586a-4567-a72f-f509d14a2605" />
+
 
 # Roadmap
 
