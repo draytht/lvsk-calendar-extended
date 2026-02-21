@@ -80,5 +80,41 @@ windowrulev2 = center, title:^(LifeManager)$
 <img width="1274" height="1402" alt="image" src="https://github.com/user-attachments/assets/49a6ac24-36e6-420d-a16f-f24082810c44" />
 <img width="1275" height="1403" alt="image" src="https://github.com/user-attachments/assets/d78a4463-a57b-4961-b4fc-c6d27f51e6dd" />
 
+# Roadmap
 
+- [x] Month calendar with vim navigation
+- [x] Event CRUD with 3-step time-picker form
+- [x] Task CRUD with completion toggle
+- [x] SQLite offline-first storage
+- [x] Hex-based theme engine (Catppuccin, Nord, Gruvbox)
+- [x] Google Calendar OAuth2 + bi-directional sync ✅
+- [x] Google Tasks bi-directional sync ✅
+- [x] Background Tokio sync worker (auto every 5 min)
+- [x] `lm auth google` CLI command
+- [x] `lm sync` headless sync command
+- [x] Conflict resolution — dirty flag preserves local edits
+- [ ] Week view (7-column hourly grid)
+- [ ] Day view (hourly timeline)
+- [ ] Agenda view (flat scrollable list)
+- [ ] Edit existing events (full form, not just create)
+- [ ] Apple Calendar / iCloud CalDAV sync
+- [ ] Fuzzy search across events and tasks (`/`)
+- [ ] Recurring event display
+- [ ] Wayland notifications on event start
+- [ ] AUR package
+- [ ] Nix flake
+
+---
+
+## Acknowledgements
+
+- [lvsk-calendar](https://github.com/Gianluska/lvsk-calendar) by Gianluska — the aesthetic that started this project
+- [ratatui](https://github.com/ratatui-org/ratatui) — the TUI framework that made it possible
+- Catppuccin, Nord, and Gruvbox theme communities
+
+---
+
+## License
+
+MIT
 
