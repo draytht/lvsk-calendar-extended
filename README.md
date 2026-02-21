@@ -16,6 +16,42 @@
  NORMAL  hjkl:nav  n:event  N:task  Tab:panels  ?:help  q:quit
 ```
 
+
+## Inspiration
+
+This project started from [lvsk-calendar](https://github.com/Gianluska/lvsk-calendar) — a lightweight, beautiful Bash terminal calendar built for Arch Linux and Hyprland. It nailed the philosophy: rounded box-drawing borders, vim-style navigation, hex-based theming, zero-config Hyprland floating window support. But it was entirely read-only — no events, no tasks, no sync.
+
+LifeManager takes that same riced, minimal aesthetic and builds a complete personal organisation tool on top of it: one that can fully replace a GUI calendar app while living entirely in the terminal.
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Why |
+|---|---|---|
+| **Language** | Rust | Sub-millisecond startup, ~5 MB resident memory, zero GC pauses — ideal for a floating TUI |
+| **TUI framework** | [ratatui](https://github.com/ratatui-org/ratatui) `0.28` | Most mature Rust TUI lib; stateless immediate-mode rendering |
+| **Terminal backend** | [crossterm](https://github.com/crossterm-rs/crossterm) `0.28` | Raw mode, key events, Wayland-compatible |
+| **Async runtime** | [tokio](https://tokio.rs) `1` | Drives the background sync worker and HTTP client independently of the TUI thread |
+| **Database** | SQLite via [sqlx](https://github.com/launchbadge/sqlx) `0.8` | Offline-first local storage; async queries; no external server needed |
+| **HTTP client** | [reqwest](https://github.com/seanmonstar/reqwest) `0.12` | Google Calendar and Tasks REST API calls |
+| **Serialization** | [serde](https://serde.rs) + serde_json | JSON for API payloads; TOML for config and theme files |
+| **Config / Theme** | [toml](https://github.com/toml-rs/toml) `0.8` | Human-editable hex colour files |
+| **Date / Time** | [chrono](https://github.com/chronotope/chrono) `0.4` | Calendar math, RFC 3339 parsing, UTC ↔ local time |
+| **Unique IDs** | [uuid](https://github.com/uuid-rs/uuid) `v4` | Collision-free local record IDs before remote sync assigns a server ID |
+| **Logging** | [tracing](https://github.com/tokio-rs/tracing) + [tracing-appender](https://docs.rs/tracing-appender) | File-only logs — stdout/stderr would corrupt the TUI |
+| **Config dirs** | [dirs](https://github.com/dirs-dev/dirs-rs) | XDG-compliant paths (`~/.config`, `~/.local/share`) |
+| **Browser launch** | [open](https://github.com/Byron/open-rs) `5` | Opens the OAuth2 consent URL in the default browser |
+
+### Why Rust over Go or Bash?
+
+The original lvsk-calendar is pure Bash — no compilation, instant startup, perfect for a read-only display widget. Once you add a reactive 50 ms-tick TUI, an async sync worker, a database, and an HTTP client, Bash becomes the wrong tool. The real choice was between Rust and Go:
+
+**Go** has solid TUI support via `bubbletea` and excellent ergonomics, but its garbage collector introduces occasional pauses that are visible in fast TUI loops, and binaries are roughly 2× larger. **Rust** compiles to a ~4 MB stripped binary, uses ~5 MB RAM, has zero GC, and `ratatui` is more battle-tested than any Go TUI library. The borrow checker adds friction during development but eliminates an entire class of runtime bugs — important for a long-running process that syncs personal data bidirectionally with a remote API.
+
+---
+
+
 ## Quick Start
 
 ```bash
