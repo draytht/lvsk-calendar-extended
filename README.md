@@ -118,28 +118,28 @@ windowrulev = center, title:^(LifeManager)$
 
 
 ## Themes
-- Nord (default)
+**Nord (default)**
 <img width="1080" height="855" alt="image" src="https://github.com/user-attachments/assets/3eb82924-bc0a-4e3f-b725-4898c29f289b" />
 
-# Gruvbox
+**Gruvbox**
 <img width="1082" height="857" alt="image" src="https://github.com/user-attachments/assets/483baf86-fc44-4f1f-a131-7b2a2ad4849f" />
 
-# Tokyo night
+**Tokyo night**
 <img width="1081" height="855" alt="image" src="https://github.com/user-attachments/assets/d83642e2-a8a5-4d55-bf33-abdc2ac6e8a8" />
 
-# Dracula
+**Dracula**
 <img width="1084" height="858" alt="image" src="https://github.com/user-attachments/assets/b98cbefd-da5c-409a-b554-b4b39623a32a" />
 
-# Cyberpunk
+**Cyberpunk**
 <img width="1082" height="851" alt="image" src="https://github.com/user-attachments/assets/8e7952ba-1f7f-4fd0-ba61-068cffc9951e" />
 
-# hacker
+**Hacker**
 <img width="1081" height="849" alt="image" src="https://github.com/user-attachments/assets/9a9ed49a-6254-4357-8007-9d920c362250" />
 
-# vietnam (my favorites)
+**vietnam (my favorites)**
 <img width="1082" height="850" alt="image" src="https://github.com/user-attachments/assets/c464e87d-b43c-4d54-aa51-2fe76267d527" />
 
-# catppuccin-mocha
+**catppuccin-mocha**
 <img width="1079" height="856" alt="image" src="https://github.com/user-attachments/assets/c228ee69-586a-4567-a72f-f509d14a2605" />
 
 
