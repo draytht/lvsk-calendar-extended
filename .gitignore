@@ -1,0 +1,16 @@
+/target
+*.log
+Cargo.lock
+
+# Personal config with Google client_id / client_secret — never commit this
+config.toml
+*.toml.local
+
+# SQLite database (contains OAuth tokens and personal events/tasks)
+*.db
+*.db-shm
+*.db-wal
+
+# Environment files
+.env
+.env.*
