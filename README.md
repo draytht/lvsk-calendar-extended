@@ -72,3 +72,13 @@ windowrulev2 = float, title:^(LifeManager)$
 windowrulev2 = size 900 600, title:^(LifeManager)$
 windowrulev2 = center, title:^(LifeManager)$
 ```
+
+## Images
+
+<img width="2556" height="1440" alt="image" src="https://github.com/user-attachments/assets/c82d3f67-3fca-43c1-ba87-44e6d052874f" />
+<img width="1266" height="1402" alt="image" src="https://github.com/user-attachments/assets/4af0cb4c-d582-4476-a743-e24a883be86f" />
+<img width="1274" height="1402" alt="image" src="https://github.com/user-attachments/assets/49a6ac24-36e6-420d-a16f-f24082810c44" />
+<img width="1275" height="1403" alt="image" src="https://github.com/user-attachments/assets/d78a4463-a57b-4961-b4fc-c6d27f51e6dd" />
+
+
+
