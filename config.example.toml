@@ -1,0 +1,21 @@
+# LifeManager config — copy to ~/.config/lifemanager/config.toml
+
+# ── Google Calendar ─────────────────────────────────────────────────────────
+# Get these from https://console.cloud.google.com
+# Create an OAuth2 "Desktop app" credential, then paste below.
+[google]
+client_id     = "YOUR_CLIENT_ID.apps.googleusercontent.com"
+client_secret = "YOUR_CLIENT_SECRET"
+calendar_ids  = ["primary"]
+# task_list_ids = ["@default"]   # omit to sync the default Google Tasks list
+
+# ── Apple / CalDAV (Phase 3) ─────────────────────────────────────────────────
+# [caldav]
+# url      = "https://caldav.icloud.com"
+# username = "you@icloud.com"
+# password = "app-specific-password"
+
+# ── Sync behaviour ────────────────────────────────────────────────────────────
+[sync]
+interval_seconds = 300
+auto_sync        = true
