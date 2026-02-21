@@ -104,9 +104,9 @@ Change any hex value — supports Catppuccin Mocha (default), Nord, Gruvbox.
 bind = $mainMod, C, exec, foot --title LifeManager lm
 
 # Auto-float the window:
-windowrulev2 = float, title:^(LifeManager)$
-windowrulev2 = size 900 600, title:^(LifeManager)$
-windowrulev2 = center, title:^(LifeManager)$
+windowrulev = float, title:^(LifeManager)$
+windowrulev = size 900 600, title:^(LifeManager)$
+windowrulev = center, title:^(LifeManager)$
 ```
 
 ## Images
