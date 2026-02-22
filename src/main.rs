@@ -2,6 +2,7 @@ mod app;
 mod calendar;
 mod config;
 mod db;
+mod holidays;
 mod sync;
 mod tasks;
 mod theme;
@@ -45,10 +46,17 @@ async fn cmd_auth_google() -> Result<()> {
         .init();
 
     let cfg = AppConfig::load()?;
-    let google = cfg.google.ok_or_else(|| anyhow!(
-        "No [google] section found in ~/.config/lifemanager/config.toml\n\
-         Copy config.example.toml and fill in your client_id and client_secret."
-    ))?;
+    let google = cfg.google.ok_or_else(|| {
+        let config_path = dirs::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("lifemanager")
+            .join("config.toml");
+        anyhow!(
+            "No [google] section found in {}\n\
+             Copy config.example.toml and fill in your client_id and client_secret.",
+            config_path.display()
+        )
+    })?;
 
     let db = Database::connect().await?;
     db.migrate().await?;

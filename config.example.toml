@@ -1,4 +1,6 @@
-# LifeManager config — copy to ~/.config/lifemanager/config.toml
+# LifeManager config
+# Linux:  copy to ~/.config/lifemanager/config.toml
+# macOS:  copy to ~/Library/Application Support/lifemanager/config.toml
 
 # ── Google Calendar ─────────────────────────────────────────────────────────
 # Get these from https://console.cloud.google.com

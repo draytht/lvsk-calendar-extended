@@ -6,10 +6,12 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
+use std::collections::HashSet;
 use std::io;
 
 use crate::{
     db::{Database, Event as DbEvent, Task},
+    holidays::{self, Holiday},
     sync::worker::{SyncEvent, SyncWorker},
     theme::ThemeConfig,
     ui::{draw, EventFormStep, InputMode, TimeField, UiState},
@@ -30,20 +32,26 @@ pub enum Panel {
 // ─── App state ────────────────────────────────────────────────────────────────
 
 pub struct App {
-    pub db:            Database,
-    pub theme:         ThemeConfig,
-    pub sync:          Option<SyncWorker>,
-    pub selected_date: NaiveDate,
-    pub view_month:    u32,
-    pub view_year:     i32,
-    pub active_panel:  Panel,
-    pub events:        Vec<DbEvent>,
-    pub tasks:         Vec<Task>,
-    pub event_cursor:  usize,
-    pub task_cursor:   usize,
-    pub ui:            UiState,
-    pub sync_status:   String,
-    pub running:       bool,
+    pub db:               Database,
+    pub theme:            ThemeConfig,
+    pub theme_idx:        usize,
+    pub sync:             Option<SyncWorker>,
+    pub selected_date:    NaiveDate,
+    pub view_month:       u32,
+    pub view_year:        i32,
+    pub active_panel:     Panel,
+    pub events:           Vec<DbEvent>,
+    pub tasks:            Vec<Task>,
+    pub event_cursor:     usize,
+    pub task_cursor:      usize,
+    pub ui:               UiState,
+    pub sync_status:      String,
+    pub running:          bool,
+    // Month-level data for calendar dots
+    pub month_event_days: HashSet<u32>,
+    pub month_holidays:   Vec<(u32, Holiday)>,
+    // Selected-day holidays
+    pub selected_holidays: Vec<Holiday>,
 }
 
 impl App {
@@ -55,8 +63,14 @@ impl App {
         ).await.unwrap_or_default();
         let tasks = db.all_tasks().await.unwrap_or_default();
 
+        let all     = ThemeConfig::all_themes();
+        let idx     = all.iter().position(|t| t.name == theme.name).unwrap_or(0);
+        let sel_hol = holidays::holidays_on(today);
+        let mon_hol = holidays::holidays_in_month(today.year(), today.month());
+
         Ok(Self {
-            db, theme, sync: None,
+            theme_idx: idx,
+            theme, db, sync: None,
             selected_date: today,
             view_month:    today.month(),
             view_year:     today.year(),
@@ -66,6 +80,9 @@ impl App {
             ui: UiState::default(),
             sync_status: String::new(),
             running: true,
+            month_event_days:  HashSet::new(),
+            month_holidays:    mon_hol,
+            selected_holidays: sel_hol,
         })
     }
 
@@ -92,13 +109,13 @@ impl App {
         &mut self,
         term: &mut Terminal<CrosstermBackend<io::Stdout>>,
     ) -> Result<()> {
-        let tick = std::time::Duration::from_millis(50);
+        // Load initial month event dots
+        self.refresh_month().await;
 
+        let tick = std::time::Duration::from_millis(50);
         while self.running {
             term.draw(|f| draw(f, self))?;
 
-            // Drain sync events into a local Vec first — avoids holding an
-            // immutable borrow on self.sync while calling &mut self methods.
             let pending: Vec<SyncEvent> = if let Some(ref w) = self.sync {
                 if let Ok(mut rx) = w.event_rx.try_lock() {
                     let mut buf = Vec::new();
@@ -121,18 +138,17 @@ impl App {
 
     fn on_sync_event(&mut self, ev: SyncEvent) {
         self.sync_status = match ev {
-            SyncEvent::SyncStarted                        => "⟳ Syncing…".into(),
+            SyncEvent::SyncStarted                         => "⟳ Syncing…".into(),
             SyncEvent::SyncComplete { pulled, pushed } =>
-                format!("✓ +{pulled} pulled, {pushed} pushed"),
-            SyncEvent::SyncError(msg)                     => format!("✗ {msg}"),
-            SyncEvent::AuthRequired                       => "Auth required — run: lm auth google".into(),
+                format!("✓ +{pulled} pulled  {pushed} pushed"),
+            SyncEvent::SyncError(msg)                      => format!("✗ {msg}"),
+            SyncEvent::AuthRequired                        => "Auth required — run: lm auth google".into(),
         };
     }
 
     // ── Input ─────────────────────────────────────────────────────────────────
 
     async fn on_key(&mut self, key: crossterm::event::KeyEvent) -> Result<()> {
-        // Global keys (handled before panel-specific logic)
         match (key.code, key.modifiers) {
             (KeyCode::Char('q'), _) => { self.running = false; return Ok(()); }
             (KeyCode::Char('s'), KeyModifiers::CONTROL) => {
@@ -167,14 +183,21 @@ impl App {
             KeyCode::Left  | KeyCode::Char('h') => self.shift_day(-1).await,
             KeyCode::Down  | KeyCode::Char('j') => self.shift_day(7).await,
             KeyCode::Up    | KeyCode::Char('k') => self.shift_day(-7).await,
-            KeyCode::Char(']') => self.next_month(),
-            KeyCode::Char('[') => self.prev_month(),
+            KeyCode::Char(']') => { self.next_month(); self.refresh_month().await; }
+            KeyCode::Char('[') => { self.prev_month(); self.refresh_month().await; }
             KeyCode::Char('t') => {
                 let t = Local::now().date_naive();
                 self.selected_date = t;
                 self.view_month    = t.month();
                 self.view_year     = t.year();
                 self.refresh().await;
+            }
+            // T (Shift+T) — cycle through themes
+            KeyCode::Char('T') => {
+                let themes = ThemeConfig::all_themes();
+                self.theme_idx = (self.theme_idx + 1) % themes.len();
+                self.theme     = themes[self.theme_idx].clone();
+                let _ = self.theme.save();
             }
             KeyCode::Enter => self.active_panel = Panel::EventList,
             KeyCode::Tab   => self.active_panel = Panel::TaskList,
@@ -209,9 +232,9 @@ impl App {
             }
             KeyCode::Char('d') | KeyCode::Delete => {
                 if let Some(ev) = self.events.get(self.event_cursor).cloned() {
-                    let mut e  = ev;
-                    e.deleted  = true;
-                    e.dirty    = true;
+                    let mut e = ev;
+                    e.deleted = true;
+                    e.dirty   = true;
                     self.db.upsert_event(&e).await?;
                     self.refresh().await;
                     if let Some(ref w) = self.sync { w.push_dirty().await; }
@@ -248,7 +271,7 @@ impl App {
         Ok(())
     }
 
-    // ── Multi-step form handler ───────────────────────────────────────────────
+    // ── Multi-step event form ─────────────────────────────────────────────────
 
     async fn key_form(&mut self, key: crossterm::event::KeyEvent) -> Result<()> {
         if self.ui.input_mode != InputMode::Insert {
@@ -263,9 +286,7 @@ impl App {
                 KeyCode::Enter     => self.commit_form().await?,
                 _ => {}
             },
-
             Panel::EventDetail => match self.ui.event_form_step {
-                // Step 1: type the event title
                 EventFormStep::Title => match key.code {
                     KeyCode::Char(c)   => self.ui.new_event_title.push(c),
                     KeyCode::Backspace => { self.ui.new_event_title.pop(); }
@@ -277,12 +298,10 @@ impl App {
                     }
                     _ => {}
                 },
-
-                // Step 2: pick start time
                 EventFormStep::StartTime => match key.code {
-                    KeyCode::Up   | KeyCode::Char('k') => self.adjust_start_time(1),
-                    KeyCode::Down | KeyCode::Char('j') => self.adjust_start_time(-1),
-                    KeyCode::Left | KeyCode::Char('h') => self.ui.time_field = TimeField::Hour,
+                    KeyCode::Up    | KeyCode::Char('k') => self.adjust_start_time(1),
+                    KeyCode::Down  | KeyCode::Char('j') => self.adjust_start_time(-1),
+                    KeyCode::Left  | KeyCode::Char('h') => self.ui.time_field = TimeField::Hour,
                     KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => {
                         self.ui.time_field = TimeField::Minute;
                     }
@@ -292,12 +311,10 @@ impl App {
                     }
                     _ => {}
                 },
-
-                // Step 3: pick end time, then save
                 EventFormStep::EndTime => match key.code {
-                    KeyCode::Up   | KeyCode::Char('k') => self.adjust_end_time(1),
-                    KeyCode::Down | KeyCode::Char('j') => self.adjust_end_time(-1),
-                    KeyCode::Left | KeyCode::Char('h') => self.ui.time_field = TimeField::Hour,
+                    KeyCode::Up    | KeyCode::Char('k') => self.adjust_end_time(1),
+                    KeyCode::Down  | KeyCode::Char('j') => self.adjust_end_time(-1),
+                    KeyCode::Left  | KeyCode::Char('h') => self.ui.time_field = TimeField::Hour,
                     KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => {
                         self.ui.time_field = TimeField::Minute;
                     }
@@ -305,7 +322,6 @@ impl App {
                     _ => {}
                 },
             },
-
             _ => {}
         }
         Ok(())
@@ -344,12 +360,10 @@ impl App {
                 if !title.is_empty() {
                     let start = self.selected_date
                         .and_hms_opt(self.ui.event_start_h, self.ui.event_start_m, 0)
-                        .unwrap()
-                        .and_utc();
+                        .unwrap().and_utc();
                     let end = self.selected_date
                         .and_hms_opt(self.ui.event_end_h, self.ui.event_end_m, 0)
-                        .unwrap()
-                        .and_utc();
+                        .unwrap().and_utc();
                     self.db.upsert_event(&DbEvent::new(&title, start, end)).await?;
                     if let Some(ref w) = self.sync { w.push_dirty().await; }
                 }
@@ -373,10 +387,15 @@ impl App {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     async fn shift_day(&mut self, d: i64) {
-        let date           = self.selected_date + Duration::days(d);
+        let date = self.selected_date + Duration::days(d);
+        let prev_month = self.view_month;
+        let prev_year  = self.view_year;
         self.selected_date = date;
         self.view_month    = date.month();
         self.view_year     = date.year();
+        if self.view_month != prev_month || self.view_year != prev_year {
+            self.refresh_month().await;
+        }
         self.refresh().await;
     }
 
@@ -393,9 +412,27 @@ impl App {
     async fn refresh(&mut self) {
         let s = self.selected_date.and_hms_opt(0, 0, 0).unwrap().and_utc();
         let e = self.selected_date.and_hms_opt(23, 59, 59).unwrap().and_utc();
-        self.events       = self.db.events_in_range(s, e).await.unwrap_or_default();
-        self.tasks        = self.db.all_tasks().await.unwrap_or_default();
-        self.event_cursor = 0;
-        self.task_cursor  = 0;
+        self.events            = self.db.events_in_range(s, e).await.unwrap_or_default();
+        self.tasks             = self.db.all_tasks().await.unwrap_or_default();
+        self.event_cursor      = 0;
+        self.task_cursor       = 0;
+        self.selected_holidays = holidays::holidays_on(self.selected_date);
+    }
+
+    /// Refresh which days in the current view-month have events/holidays.
+    pub async fn refresh_month(&mut self) {
+        let start = NaiveDate::from_ymd_opt(self.view_year, self.view_month, 1)
+            .unwrap().and_hms_opt(0, 0, 0).unwrap().and_utc();
+        let end = if self.view_month == 12 {
+            NaiveDate::from_ymd_opt(self.view_year + 1, 1, 1)
+        } else {
+            NaiveDate::from_ymd_opt(self.view_year, self.view_month + 1, 1)
+        }.unwrap().and_hms_opt(0, 0, 0).unwrap().and_utc();
+
+        let evs = self.db.events_in_range(start, end).await.unwrap_or_default();
+        self.month_event_days = evs.iter()
+            .map(|e| e.start.with_timezone(&chrono::Local).day())
+            .collect();
+        self.month_holidays = holidays::holidays_in_month(self.view_year, self.view_month);
     }
 }
