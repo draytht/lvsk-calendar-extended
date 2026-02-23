@@ -1,9 +1,13 @@
 //! Google Calendar + Tasks OAuth2 & REST API client.
 //!
-//! Auth flow:
-//!   1. Call build_auth_url() → open in browser
-//!   2. Call listen_for_callback() → captures redirect with ?code=
-//!   3. Call exchange_code(code) → stores tokens in DB
+//! Credentials are embedded at compile time:
+//!   GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set as env vars when
+//!   building the release binary. Users never need to configure credentials.
+//!
+//! Auth flow (first run):
+//!   1. build_auth_url() → open in browser
+//!   2. listen_for_callback() → captures redirect with ?code=
+//!   3. exchange_code(code) → stores tokens in DB
 //!   4. All subsequent calls auto-refresh if expired
 
 use anyhow::{anyhow, Result};
@@ -15,23 +19,43 @@ use std::collections::HashMap;
 
 use crate::db::{Database, Event, Task};
 
+// ─── Compile-time credentials (set by the developer at build time) ────────────
+
+const CLIENT_ID: &str = env!(
+    "GOOGLE_CLIENT_ID",
+    "Set GOOGLE_CLIENT_ID env var when building: GOOGLE_CLIENT_ID=xxx cargo build --release"
+);
+const CLIENT_SECRET: &str = env!(
+    "GOOGLE_CLIENT_SECRET",
+    "Set GOOGLE_CLIENT_SECRET env var when building: GOOGLE_CLIENT_SECRET=xxx cargo build --release"
+);
+
 const AUTH_URL:     &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL:    &str = "https://oauth2.googleapis.com/token";
 const REDIRECT_URI: &str = "http://localhost:8085/callback";
 const SCOPES:       &str = "https://www.googleapis.com/auth/calendar \
                              https://www.googleapis.com/auth/tasks";
 
-// ─── Config ───────────────────────────────────────────────────────────────────
+// ─── Config (calendar/task IDs only — no credentials needed from users) ───────
 
-fn default_task_lists() -> Vec<String> { vec!["@default".to_owned()] }
+fn default_calendar_ids() -> Vec<String> { vec!["primary".to_owned()] }
+fn default_task_lists()    -> Vec<String> { vec!["@default".to_owned()] }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct GoogleConfig {
-    pub client_id:     String,
-    pub client_secret: String,
+    #[serde(default = "default_calendar_ids")]
     pub calendar_ids:  Vec<String>,
     #[serde(default = "default_task_lists")]
     pub task_list_ids: Vec<String>,
+}
+
+impl Default for GoogleConfig {
+    fn default() -> Self {
+        Self {
+            calendar_ids:  default_calendar_ids(),
+            task_list_ids: default_task_lists(),
+        }
+    }
 }
 
 // ─── Token response ───────────────────────────────────────────────────────────
@@ -102,11 +126,13 @@ impl GoogleCalendarClient {
 
     // ── Auth flow ─────────────────────────────────────────────────────────────
 
-    pub fn build_auth_url(&self) -> String {
+    /// Build the Google OAuth authorization URL. No credentials needed from caller —
+    /// CLIENT_ID is embedded at compile time.
+    pub fn build_auth_url() -> String {
         format!(
             "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent",
             AUTH_URL,
-            pct(&self.config.client_id),
+            pct(CLIENT_ID),
             pct(REDIRECT_URI),
             pct(SCOPES),
         )
@@ -144,8 +170,8 @@ impl GoogleCalendarClient {
     pub async fn exchange_code(&mut self, code: &str) -> Result<()> {
         let mut p = HashMap::new();
         p.insert("code",          code);
-        p.insert("client_id",     &self.config.client_id);
-        p.insert("client_secret", &self.config.client_secret);
+        p.insert("client_id",     CLIENT_ID);
+        p.insert("client_secret", CLIENT_SECRET);
         p.insert("redirect_uri",  REDIRECT_URI);
         p.insert("grant_type",    "authorization_code");
 
@@ -182,17 +208,15 @@ impl GoogleCalendarClient {
                 return self.refresh_token(&rt).await;
             }
         }
-        Err(anyhow!("Not authenticated. Run:  lm auth google"))
+        Err(anyhow!("Not authenticated"))
     }
 
     async fn refresh_token(&mut self, refresh_token: &str) -> Result<()> {
-        let rt  = refresh_token.to_owned();
-        let cid = self.config.client_id.clone();
-        let cs  = self.config.client_secret.clone();
+        let rt = refresh_token.to_owned();
         let mut p = HashMap::new();
         p.insert("refresh_token", rt.as_str());
-        p.insert("client_id",     cid.as_str());
-        p.insert("client_secret", cs.as_str());
+        p.insert("client_id",     CLIENT_ID);
+        p.insert("client_secret", CLIENT_SECRET);
         p.insert("grant_type",    "refresh_token");
 
         let resp: TokenResponse = self.http.post(TOKEN_URL).form(&p)
@@ -397,7 +421,6 @@ fn task_to_gtask(t: &Task) -> Value {
 }
 
 pub fn gtask_to_local(g: &GTask, task_list_id: &str) -> Option<Task> {
-    // Skip deleted tasks (they'll be handled by the deleted flag)
     let deleted   = g.deleted.unwrap_or(false);
     let title     = g.title.clone().unwrap_or_else(|| "(no title)".into());
     let completed = g.status.as_deref() == Some("completed");

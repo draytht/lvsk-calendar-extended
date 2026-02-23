@@ -13,6 +13,8 @@ use crate::sync::google::{gcal_to_local, gtask_to_local, GoogleCalendarClient, G
 pub enum SyncCommand {
     SyncNow,
     PushDirty,
+    /// Exchange an OAuth code received from the browser callback for tokens.
+    ExchangeCode(String),
     Shutdown,
 }
 
@@ -21,7 +23,10 @@ pub enum SyncEvent {
     SyncStarted,
     SyncComplete { pulled: usize, pushed: usize },
     SyncError(String),
+    /// No token found — the TUI should prompt the user to connect.
     AuthRequired,
+    /// Token exchange succeeded — the TUI can show the connected state.
+    AuthComplete,
 }
 
 // ─── Worker handle ────────────────────────────────────────────────────────────
@@ -32,7 +37,10 @@ pub struct SyncWorker {
 }
 
 impl SyncWorker {
-    pub fn spawn(db: Database, google_config: Option<GoogleConfig>) -> Self {
+    /// Spawn the background worker. Always creates a Google client (credentials
+    /// are embedded at compile time). `google_config` controls which
+    /// calendar/task-list IDs to sync; falls back to "primary" / "@default".
+    pub fn spawn(db: Database, google_config: GoogleConfig) -> Self {
         let (cmd_tx,   mut cmd_rx)   = mpsc::channel::<SyncCommand>(32);
         let (event_tx,     event_rx) = mpsc::channel::<SyncEvent>(64);
 
@@ -40,30 +48,47 @@ impl SyncWorker {
             let mut interval = tokio::time::interval(Duration::from_secs(300));
             interval.tick().await; // discard first immediate tick
 
-            let client = google_config.map(|cfg| {
-                Arc::new(Mutex::new(GoogleCalendarClient::new(cfg, db.clone())))
-            });
+            let client = Arc::new(Mutex::new(
+                GoogleCalendarClient::new(google_config, db.clone())
+            ));
 
             loop {
                 tokio::select! {
                     cmd = cmd_rx.recv() => match cmd {
                         Some(SyncCommand::Shutdown) | None => break,
-                        Some(SyncCommand::SyncNow) => {
-                            if let Some(ref c) = client {
-                                run_sync(c.clone(), &db, &event_tx).await;
+
+                        Some(SyncCommand::ExchangeCode(code)) => {
+                            let mut c = client.lock().await;
+                            match c.exchange_code(&code).await {
+                                Ok(_) => {
+                                    let _ = event_tx.send(SyncEvent::AuthComplete).await;
+                                    tracing::info!("OAuth exchange succeeded, triggering sync");
+                                    drop(c);
+                                    run_sync(client.clone(), &db, &event_tx).await;
+                                }
+                                Err(e) => {
+                                    tracing::error!("OAuth exchange failed: {e}");
+                                    let _ = event_tx.send(
+                                        SyncEvent::SyncError(format!("Auth failed: {e}"))
+                                    ).await;
+                                }
                             }
                         }
+
+                        Some(SyncCommand::SyncNow) => {
+                            if !check_auth(client.clone(), &event_tx).await { continue; }
+                            run_sync(client.clone(), &db, &event_tx).await;
+                        }
+
                         Some(SyncCommand::PushDirty) => {
-                            if let Some(ref c) = client {
-                                push_dirty_events(c.clone(), &db, &event_tx).await;
-                                push_dirty_tasks(c.clone(), &db, &event_tx).await;
-                            }
+                            if !check_auth(client.clone(), &event_tx).await { continue; }
+                            push_dirty_events(client.clone(), &db, &event_tx).await;
+                            push_dirty_tasks(client.clone(), &db, &event_tx).await;
                         }
                     },
                     _ = interval.tick() => {
-                        if let Some(ref c) = client {
-                            run_sync(c.clone(), &db, &event_tx).await;
-                        }
+                        if !check_auth(client.clone(), &event_tx).await { continue; }
+                        run_sync(client.clone(), &db, &event_tx).await;
                     }
                 }
             }
@@ -74,9 +99,29 @@ impl SyncWorker {
         SyncWorker { cmd_tx, event_rx: Arc::new(Mutex::new(event_rx)) }
     }
 
-    pub async fn sync_now(&self)   { let _ = self.cmd_tx.send(SyncCommand::SyncNow).await; }
-    pub async fn push_dirty(&self) { let _ = self.cmd_tx.send(SyncCommand::PushDirty).await; }
-    pub async fn shutdown(&self)   { let _ = self.cmd_tx.send(SyncCommand::Shutdown).await; }
+    pub async fn sync_now(&self)    { let _ = self.cmd_tx.send(SyncCommand::SyncNow).await; }
+    pub async fn push_dirty(&self)  { let _ = self.cmd_tx.send(SyncCommand::PushDirty).await; }
+    pub async fn shutdown(&self)    { let _ = self.cmd_tx.send(SyncCommand::Shutdown).await; }
+
+    pub async fn exchange_code(&self, code: String) {
+        let _ = self.cmd_tx.send(SyncCommand::ExchangeCode(code)).await;
+    }
+}
+
+// ─── Auth check helper ────────────────────────────────────────────────────────
+
+/// Returns true if authenticated, false (and emits AuthRequired) if not.
+async fn check_auth(
+    client: Arc<Mutex<GoogleCalendarClient>>,
+    tx:     &mpsc::Sender<SyncEvent>,
+) -> bool {
+    let mut c = client.lock().await;
+    if c.ensure_authenticated().await.is_ok() {
+        true
+    } else {
+        let _ = tx.send(SyncEvent::AuthRequired).await;
+        false
+    }
 }
 
 // ─── Full sync ────────────────────────────────────────────────────────────────
@@ -112,7 +157,6 @@ async fn run_sync(
 
         for ge in &events {
             if let Some(local) = gcal_to_local(ge, cal_id) {
-                // upsert_remote_event deduplicates by sync_id and honours local dirty flag
                 if db.upsert_remote_event(&local).await.is_ok() { pulled += 1; }
             }
         }

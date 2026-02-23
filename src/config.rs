@@ -6,6 +6,8 @@ use crate::sync::google::GoogleConfig;
 
 #[derive(Debug, Deserialize, Default)]
 pub struct AppConfig {
+    /// Optional: override which calendars/task lists to sync.
+    /// If omitted, defaults to "primary" calendar and "@default" task list.
     pub google: Option<GoogleConfig>,
     pub sync:   Option<SyncConfig>,
 }

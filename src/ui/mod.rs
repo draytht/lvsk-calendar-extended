@@ -7,7 +7,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, Panel};
+use crate::app::{App, AuthState, Panel};
 use crate::calendar::days_in_month;
 
 // ─── UI enums / state ─────────────────────────────────────────────────────────
@@ -89,12 +89,19 @@ pub fn draw(f: &mut Frame, app: &App) {
     draw_tasks(f, app, rows[1]);
     draw_statusbar(f, app, root[2]);
 
-    // Overlays
+    // Panel overlays
     match app.active_panel {
         Panel::EventDetail => draw_event_form(f, area, app),
         Panel::TaskDetail  => draw_task_popup(f, area, app),
         Panel::Help        => draw_help(f, area, app),
         _ => {}
+    }
+
+    // Auth overlays (drawn on top of everything else)
+    match app.auth_state {
+        AuthState::Prompted         => draw_auth_prompt(f, area, app),
+        AuthState::WaitingCallback  => draw_auth_waiting(f, area, app),
+        AuthState::Connected | AuthState::Offline => {}
     }
 }
 
@@ -695,6 +702,106 @@ fn draw_help(f: &mut Frame, area: Rect, app: &App) {
             .style(Style::default().fg(t.fg()))
             .wrap(Wrap { trim: false }),
         rect,
+    );
+}
+
+// ─── Google auth prompt ───────────────────────────────────────────────────────
+
+fn draw_auth_prompt(f: &mut Frame, area: Rect, app: &App) {
+    let t    = &app.theme;
+    let bt   = app.theme.border_type();
+    let rect = centered(60, 48, area);
+    draw_shadow(f, rect, t.bg2());
+    f.render_widget(Clear, rect);
+
+    let block = Block::default()
+        .title(Title::from(Line::from(Span::styled(
+            " Connect Google Calendar ",
+            Style::default().fg(t.accent()).add_modifier(Modifier::BOLD),
+        ))))
+        .borders(Borders::ALL)
+        .border_type(bt)
+        .border_style(Style::default().fg(t.border_active()))
+        .style(Style::default().bg(t.popup_bg()));
+
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let acc = Style::default().fg(t.accent()).add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(t.fg_dim());
+    let fg  = Style::default().fg(t.fg());
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled("  Sync your Google Calendar & Tasks", fg)),
+        Line::from(Span::styled("  with LifeManager automatically.", fg)),
+        Line::from(""),
+        Line::from(Span::styled("  Your browser will open for Google sign-in.", dim)),
+        Line::from(Span::styled("  No Google Cloud setup required on your end.", dim)),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  ─────────────────────────────────────",
+            Style::default().fg(t.border()),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  g", acc),
+            Span::styled("   Connect Google Calendar + Tasks", fg),
+        ]),
+        Line::from(vec![
+            Span::styled("  Esc", Style::default().fg(t.fg_dim()).add_modifier(Modifier::BOLD)),
+            Span::styled("  Skip — use without sync", dim),
+        ]),
+    ];
+
+    f.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(t.popup_bg())),
+        inner,
+    );
+}
+
+fn draw_auth_waiting(f: &mut Frame, area: Rect, app: &App) {
+    let t    = &app.theme;
+    let bt   = app.theme.border_type();
+    let rect = centered(58, 36, area);
+    draw_shadow(f, rect, t.bg2());
+    f.render_widget(Clear, rect);
+
+    let block = Block::default()
+        .title(Title::from(Line::from(Span::styled(
+            " Waiting for Google Sign-In ",
+            Style::default().fg(t.accent()).add_modifier(Modifier::BOLD),
+        ))))
+        .borders(Borders::ALL)
+        .border_type(bt)
+        .border_style(Style::default().fg(t.border_active()))
+        .style(Style::default().bg(t.popup_bg()));
+
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let dim = Style::default().fg(t.fg_dim());
+    let fg  = Style::default().fg(t.fg());
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled("  Your browser has been opened.", fg)),
+        Line::from(""),
+        Line::from(Span::styled("  1. Sign in to your Google account.", dim)),
+        Line::from(Span::styled("  2. Grant calendar & task access.", dim)),
+        Line::from(Span::styled("  3. Return here — sync starts automatically.", dim)),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  ─────────────────────────────────────",
+            Style::default().fg(t.border()),
+        )),
+        Line::from(""),
+        Line::from(Span::styled("  Esc  Cancel", dim)),
+    ];
+
+    f.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(t.popup_bg())),
+        inner,
     );
 }
 

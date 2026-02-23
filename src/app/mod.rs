@@ -8,11 +8,15 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::collections::HashSet;
 use std::io;
+use tokio::sync::oneshot;
 
 use crate::{
     db::{Database, Event as DbEvent, Task},
     holidays::{self, Holiday},
-    sync::worker::{SyncEvent, SyncWorker},
+    sync::{
+        google::GoogleCalendarClient,
+        worker::{SyncEvent, SyncWorker},
+    },
     theme::ThemeConfig,
     ui::{draw, EventFormStep, InputMode, TimeField, UiState},
 };
@@ -27,6 +31,20 @@ pub enum Panel {
     EventDetail,
     TaskDetail,
     Help,
+}
+
+// ─── Auth state ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AuthState {
+    /// First run: show the "Connect Google" overlay.
+    Prompted,
+    /// Browser opened; listening for the OAuth callback.
+    WaitingCallback,
+    /// Authenticated — sync is running normally.
+    Connected,
+    /// User dismissed the prompt; app works offline.
+    Offline,
 }
 
 // ─── App state ────────────────────────────────────────────────────────────────
@@ -47,11 +65,14 @@ pub struct App {
     pub ui:               UiState,
     pub sync_status:      String,
     pub running:          bool,
+    pub auth_state:       AuthState,
     // Month-level data for calendar dots
     pub month_event_days: HashSet<u32>,
     pub month_holidays:   Vec<(u32, Holiday)>,
     // Selected-day holidays
     pub selected_holidays: Vec<Holiday>,
+    // Receives the OAuth code from the background listener task
+    auth_code_rx: Option<oneshot::Receiver<Result<String>>>,
 }
 
 impl App {
@@ -68,6 +89,13 @@ impl App {
         let sel_hol = holidays::holidays_on(today);
         let mon_hol = holidays::holidays_in_month(today.year(), today.month());
 
+        // Show the connect prompt on first run (no stored token).
+        let auth_state = if db.get_token("google").await.ok().flatten().is_some() {
+            AuthState::Connected
+        } else {
+            AuthState::Prompted
+        };
+
         Ok(Self {
             theme_idx: idx,
             theme, db, sync: None,
@@ -80,9 +108,11 @@ impl App {
             ui: UiState::default(),
             sync_status: String::new(),
             running: true,
+            auth_state,
             month_event_days:  HashSet::new(),
             month_holidays:    mon_hol,
             selected_holidays: sel_hol,
+            auth_code_rx: None,
         })
     }
 
@@ -109,13 +139,32 @@ impl App {
         &mut self,
         term: &mut Terminal<CrosstermBackend<io::Stdout>>,
     ) -> Result<()> {
-        // Load initial month event dots
         self.refresh_month().await;
 
         let tick = std::time::Duration::from_millis(50);
         while self.running {
             term.draw(|f| draw(f, self))?;
 
+            // ── Poll auth code channel ─────────────────────────────────────
+            if let Some(ref mut rx) = self.auth_code_rx {
+                if let Ok(result) = rx.try_recv() {
+                    self.auth_code_rx = None;
+                    match result {
+                        Ok(code) => {
+                            self.sync_status = "Authorizing with Google…".into();
+                            if let Some(ref w) = self.sync {
+                                w.exchange_code(code).await;
+                            }
+                        }
+                        Err(e) => {
+                            self.sync_status = format!("Auth error: {e}");
+                            self.auth_state  = AuthState::Prompted;
+                        }
+                    }
+                }
+            }
+
+            // ── Drain sync events ──────────────────────────────────────────
             let pending: Vec<SyncEvent> = if let Some(ref w) = self.sync {
                 if let Ok(mut rx) = w.event_rx.try_lock() {
                     let mut buf = Vec::new();
@@ -123,7 +172,7 @@ impl App {
                     buf
                 } else { vec![] }
             } else { vec![] };
-            for ev in pending { self.on_sync_event(ev); }
+            for ev in pending { self.on_sync_event(ev).await; }
 
             if event::poll(tick)? {
                 if let Event::Key(key) = event::read()? {
@@ -136,23 +185,68 @@ impl App {
         Ok(())
     }
 
-    fn on_sync_event(&mut self, ev: SyncEvent) {
+    async fn on_sync_event(&mut self, ev: SyncEvent) {
         self.sync_status = match ev {
-            SyncEvent::SyncStarted                         => "⟳ Syncing…".into(),
+            SyncEvent::SyncStarted                     => "Syncing…".into(),
             SyncEvent::SyncComplete { pulled, pushed } =>
-                format!("✓ +{pulled} pulled  {pushed} pushed"),
-            SyncEvent::SyncError(msg)                      => format!("✗ {msg}"),
-            SyncEvent::AuthRequired                        => "Auth required — run: lm auth google".into(),
+                format!("+{pulled} pulled  {pushed} pushed"),
+            SyncEvent::SyncError(msg)                  => format!("Sync error: {msg}"),
+            SyncEvent::AuthRequired => {
+                // Only show the prompt if we aren't already handling auth and
+                // the user hasn't explicitly gone offline.
+                if self.auth_state == AuthState::Connected {
+                    self.auth_state = AuthState::Prompted;
+                }
+                "Connect Google to sync".into()
+            }
+            SyncEvent::AuthComplete => {
+                self.auth_state = AuthState::Connected;
+                // Refresh UI data after initial sync completes
+                self.refresh().await;
+                "Connected to Google Calendar".into()
+            }
         };
     }
 
     // ── Input ─────────────────────────────────────────────────────────────────
 
     async fn on_key(&mut self, key: crossterm::event::KeyEvent) -> Result<()> {
+        // Auth overlay intercepts keys while the prompt is visible
+        match self.auth_state {
+            AuthState::Prompted => {
+                match key.code {
+                    KeyCode::Char('g') => {
+                        self.start_google_auth();
+                    }
+                    KeyCode::Esc | KeyCode::Char('q') => {
+                        self.auth_state  = AuthState::Offline;
+                        self.sync_status = "Sync disabled — press g to connect later".into();
+                    }
+                    _ => {}
+                }
+                return Ok(());
+            }
+            AuthState::WaitingCallback => {
+                // Allow Esc to cancel the pending callback
+                if key.code == KeyCode::Esc {
+                    self.auth_code_rx = None;
+                    self.auth_state   = AuthState::Prompted;
+                    self.sync_status  = String::new();
+                }
+                return Ok(());
+            }
+            AuthState::Connected | AuthState::Offline => {}
+        }
+
         match (key.code, key.modifiers) {
             (KeyCode::Char('q'), _) => { self.running = false; return Ok(()); }
             (KeyCode::Char('s'), KeyModifiers::CONTROL) => {
                 if let Some(ref w) = self.sync { w.sync_now().await; }
+                return Ok(());
+            }
+            // Press 'g' from calendar to (re-)open the Google auth prompt
+            (KeyCode::Char('g'), _) if self.auth_state == AuthState::Offline => {
+                self.auth_state = AuthState::Prompted;
                 return Ok(());
             }
             (KeyCode::Char('?'), _) => { self.active_panel = Panel::Help; return Ok(()); }
@@ -177,6 +271,25 @@ impl App {
         Ok(())
     }
 
+    // ── Google auth ───────────────────────────────────────────────────────────
+
+    /// Open the browser for OAuth and spawn a background task that listens for
+    /// the redirect callback. The code is delivered via `auth_code_rx`.
+    fn start_google_auth(&mut self) {
+        let (tx, rx) = oneshot::channel();
+        self.auth_code_rx = Some(rx);
+        self.auth_state   = AuthState::WaitingCallback;
+        self.sync_status  = "Waiting for Google sign-in…".into();
+
+        let url = GoogleCalendarClient::build_auth_url();
+        let _ = open::that(&url);
+
+        tokio::spawn(async move {
+            let result = GoogleCalendarClient::listen_for_callback().await;
+            let _ = tx.send(result);
+        });
+    }
+
     async fn key_calendar(&mut self, key: crossterm::event::KeyEvent) -> Result<()> {
         match key.code {
             KeyCode::Right | KeyCode::Char('l') => self.shift_day(1).await,
@@ -192,7 +305,6 @@ impl App {
                 self.view_year     = t.year();
                 self.refresh().await;
             }
-            // T (Shift+T) — cycle through themes
             KeyCode::Char('T') => {
                 let themes = ThemeConfig::all_themes();
                 self.theme_idx = (self.theme_idx + 1) % themes.len();
@@ -419,7 +531,6 @@ impl App {
         self.selected_holidays = holidays::holidays_on(self.selected_date);
     }
 
-    /// Refresh which days in the current view-month have events/holidays.
     pub async fn refresh_month(&mut self) {
         let start = NaiveDate::from_ymd_opt(self.view_year, self.view_month, 1)
             .unwrap().and_hms_opt(0, 0, 0).unwrap().and_utc();

@@ -8,102 +8,17 @@ mod tasks;
 mod theme;
 mod ui;
 
-use anyhow::{anyhow, Result};
-use app::App;
+use anyhow::Result;
+use app::{App, AuthState};
 use config::AppConfig;
 use db::Database;
-use sync::google::GoogleCalendarClient;
 use sync::worker::SyncWorker;
 use theme::ThemeConfig;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-
-    // ── lm auth google ────────────────────────────────────────────────────────
-    if args.get(1).map(|s| s.as_str()) == Some("auth")
-        && args.get(2).map(|s| s.as_str()) == Some("google")
-    {
-        return cmd_auth_google().await;
-    }
-
-    // ── lm sync ───────────────────────────────────────────────────────────────
-    if args.get(1).map(|s| s.as_str()) == Some("sync") {
-        return cmd_sync().await;
-    }
-
-    // ── lm (TUI) ──────────────────────────────────────────────────────────────
     run_tui().await
-}
-
-// ─── Auth command ─────────────────────────────────────────────────────────────
-
-async fn cmd_auth_google() -> Result<()> {
-    // Logging to stderr so it doesn't interfere with terminal output
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-        .init();
-
-    let cfg = AppConfig::load()?;
-    let google = cfg.google.ok_or_else(|| {
-        let config_path = dirs::config_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("lifemanager")
-            .join("config.toml");
-        anyhow!(
-            "No [google] section found in {}\n\
-             Copy config.example.toml and fill in your client_id and client_secret.",
-            config_path.display()
-        )
-    })?;
-
-    let db = Database::connect().await?;
-    db.migrate().await?;
-
-    let mut client = GoogleCalendarClient::new(google, db);
-    let url = client.build_auth_url();
-
-    println!("\nOpening Google authorization in your browser…");
-    println!("If it doesn't open automatically, visit:\n\n  {url}\n");
-
-    // Try to open in browser; ignore errors (user can open manually)
-    let _ = open::that(&url);
-
-    println!("Waiting for Google to redirect back (listening on :8085)…");
-
-    let code = GoogleCalendarClient::listen_for_callback().await?;
-    client.exchange_code(&code).await?;
-
-    println!("\nSuccess! Google Calendar and Tasks are now authorized.");
-    println!("Run  lm  to start the app — it will sync automatically.");
-
-    Ok(())
-}
-
-// ─── Manual sync command ──────────────────────────────────────────────────────
-
-async fn cmd_sync() -> Result<()> {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-        .init();
-
-    let cfg = AppConfig::load()?;
-    if cfg.google.is_none() {
-        println!("No [google] config found. Run  lm auth google  first.");
-        return Ok(());
-    }
-
-    let db     = Database::connect().await?;
-    db.migrate().await?;
-    let worker = SyncWorker::spawn(db.clone(), cfg.google);
-    worker.sync_now().await;
-
-    // Give the worker time to complete before exiting
-    tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-    worker.shutdown().await;
-    println!("Sync complete.");
-    Ok(())
 }
 
 // ─── TUI ─────────────────────────────────────────────────────────────────────
@@ -126,13 +41,16 @@ async fn run_tui() -> Result<()> {
     let db    = Database::connect().await?;
     db.migrate().await?;
 
-    let has_google = cfg.google.is_some();
-    let worker     = SyncWorker::spawn(db.clone(), cfg.google);
+    // Use calendar/task-list IDs from config, or defaults.
+    // Credentials are embedded at compile time — users never configure them.
+    let google_config = cfg.google.unwrap_or_default();
+    let worker = SyncWorker::spawn(db.clone(), google_config);
 
     let mut app = App::new(db, theme).await?;
     app.attach_sync_worker(worker);
 
-    if has_google {
+    // Already authenticated from a previous session — kick off a sync right away.
+    if app.auth_state == AuthState::Connected {
         if let Some(ref w) = app.sync {
             w.sync_now().await;
         }
